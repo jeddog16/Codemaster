@@ -5,14 +5,16 @@ import LoginGate from "@/components/LoginGate";
 import { auth, db } from "@/lib/firebase";
 import { onAuthStateChanged, User } from "firebase/auth";
 import {
-  doc,
-  setDoc,
-  serverTimestamp,
   collection,
-  query,
+  doc,
+  getDoc,
+  onSnapshot,
   orderBy,
   limit,
-  onSnapshot,
+  query,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
 } from "firebase/firestore";
 
 type JunkItem = {
@@ -56,15 +58,28 @@ type LeaderRow = {
   name: string;
   email: string;
   score: number;
-  updatedAt?: any;
+  season: number;
+  submittedAt?: any;
 };
 
+const ADMIN_EMAIL = "jed@nowbuildings.com.au";
+
 export default function Home() {
-  // ===== Auth user (so we can save score to their UID) =====
+  // ===== Auth user =====
   const [user, setUser] = useState<User | null>(null);
+  useEffect(() => onAuthStateChanged(auth, (u) => setUser(u)), []);
+
+  const isAdmin = (user?.email || "").toLowerCase() === ADMIN_EMAIL.toLowerCase();
+
+  // ===== Season state =====
+  const [season, setSeason] = useState<number | null>(null);
 
   useEffect(() => {
-    return onAuthStateChanged(auth, (u) => setUser(u));
+    // Live read season
+    return onSnapshot(doc(db, "meta", "game"), (snap) => {
+      const s = snap.data()?.season;
+      setSeason(typeof s === "number" ? s : null);
+    });
   }, []);
 
   // ===== Game state =====
@@ -73,7 +88,6 @@ export default function Home() {
 
   const [guessObject, setGuessObject] = useState("");
   const [guessOwner, setGuessOwner] = useState("");
-
   const [submitted, setSubmitted] = useState(false);
   const [showFull, setShowFull] = useState(false);
 
@@ -81,16 +95,47 @@ export default function Home() {
   const [scoredThisRound, setScoredThisRound] = useState(false);
 
   const [gameOver, setGameOver] = useState(false);
+
+  // One-attempt enforcement UI state
+  const [alreadySubmitted, setAlreadySubmitted] = useState(false);
+  const [checkingAttempt, setCheckingAttempt] = useState(true);
+
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const correctObject = normalize(guessObject) === normalize(current.answerObject);
   const correctOwner = normalize(guessOwner) === normalize(current.answerOwner);
   const bothCorrect = correctObject && correctOwner;
 
+  // Check if this user already submitted for this season
+  useEffect(() => {
+    const run = async () => {
+      if (!user || season == null) {
+        setAlreadySubmitted(false);
+        setCheckingAttempt(false);
+        return;
+      }
+
+      setCheckingAttempt(true);
+      const ref = doc(db, "leaderboard", user.uid);
+      const snap = await getDoc(ref);
+      if (!snap.exists()) {
+        setAlreadySubmitted(false);
+        setCheckingAttempt(false);
+        return;
+      }
+
+      const data = snap.data() as any;
+      setAlreadySubmitted(data?.season === season);
+      setCheckingAttempt(false);
+    };
+
+    run();
+  }, [user?.uid, season]);
+
   function submit() {
     setSubmitted(true);
 
-    // Award 1 point only once per round, when both correct
     if (bothCorrect && !scoredThisRound) {
       setScore((s) => s + 1);
       setScoredThisRound(true);
@@ -125,7 +170,8 @@ export default function Home() {
     setScoredThisRound(false);
   }
 
-  function restart() {
+  function restartLocalOnly() {
+    // This does NOT let them re-submit to leaderboard (rules block it)
     setIndex(0);
     setGuessObject("");
     setGuessOwner("");
@@ -134,58 +180,144 @@ export default function Home() {
     setScoredThisRound(false);
     setScore(0);
     setGameOver(false);
+    setSaveError(null);
   }
 
   // ===== Leaderboard =====
   const [leaders, setLeaders] = useState<LeaderRow[]>([]);
 
   useEffect(() => {
-    const q = query(collection(db, "leaderboard"), orderBy("score", "desc"), limit(20));
+    if (season == null) return;
 
+    const q = query(
+      collection(db, "leaderboard"),
+      orderBy("score", "desc"),
+      limit(50)
+    );
+
+    // We’ll filter season client-side for simplicity
     const unsub = onSnapshot(q, (snap) => {
-      const rows: LeaderRow[] = snap.docs.map((d) => {
-        const data = d.data() as any;
-        return {
-          uid: d.id,
-          name: data.name ?? "",
-          email: data.email ?? "",
-          score: Number(data.score ?? 0),
-          updatedAt: data.updatedAt,
-        };
-      });
+      const rows: LeaderRow[] = snap.docs
+        .map((d) => {
+          const data = d.data() as any;
+          return {
+            uid: d.id,
+            name: data.name ?? "",
+            email: data.email ?? "",
+            score: Number(data.score ?? 0),
+            season: Number(data.season ?? -1),
+            submittedAt: data.submittedAt,
+          };
+        })
+        .filter((r) => r.season === season);
+
       setLeaders(rows);
     });
 
     return () => unsub();
-  }, []);
+  }, [season]);
 
-  async function saveScore() {
+  async function saveScoreOnce() {
     if (!user) return;
+    if (season == null) {
+      setSaveError("Season not loaded. Check meta/game exists in Firestore.");
+      return;
+    }
 
     setSaving(true);
+    setSaveError(null);
+
     try {
-      const ref = doc(db, "leaderboard", user.uid);
+      // IMPORTANT: setDoc without merge so it is a CREATE.
+      // Firestore rules allow create only once per season.
+      await setDoc(doc(db, "leaderboard", user.uid), {
+        uid: user.uid,
+        email: user.email ?? "",
+        name: user.displayName ?? (user.email ?? "").split("@")[0],
+        score,
+        season,
+        submittedAt: serverTimestamp(),
+      });
 
-      // keep the best score (don’t overwrite if they already have higher)
-      const existing = leaders.find((l) => l.uid === user.uid);
-      const best = Math.max(existing?.score ?? 0, score);
-
-      await setDoc(
-        ref,
-        {
-          uid: user.uid,
-          email: user.email ?? "",
-          name: user.displayName ?? (user.email ?? "").split("@")[0],
-          score: best,
-          updatedAt: serverTimestamp(),
-        },
-        { merge: true }
-      );
+      setAlreadySubmitted(true);
+    } catch (e: any) {
+      // Most common: permission denied because they already submitted
+      setSaveError(e?.message || "Could not save score.");
     } finally {
       setSaving(false);
     }
   }
 
+  async function resetLeaderboardSeason() {
+    if (!isAdmin) return;
+    if (season == null) return;
+
+    await updateDoc(doc(db, "meta", "game"), {
+      season: season + 1,
+    });
+
+    // After reset, allow fresh plays
+    restartLocalOnly();
+  }
+
+  // ===== Loading gates =====
+  if (season == null) {
+    return (
+      <LoginGate>
+        <main className="min-h-screen bg-black text-white flex items-center justify-center p-6">
+          <div className="text-white/70">
+            Loading game settings… (Did you create Firestore doc meta/game with season=1?)
+          </div>
+        </main>
+      </LoginGate>
+    );
+  }
+
+  if (checkingAttempt) {
+    return (
+      <LoginGate>
+        <main className="min-h-screen bg-black text-white flex items-center justify-center p-6">
+          <div className="text-white/70">Loading…</div>
+        </main>
+      </LoginGate>
+    );
+  }
+
+  // If they already submitted for this season, block the game and show leaderboard
+  if (alreadySubmitted) {
+    return (
+      <LoginGate>
+        <main className="min-h-screen bg-black text-white flex items-center justify-center p-6">
+          <div className="w-full max-w-3xl space-y-4">
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-2">
+              <h1 className="text-2xl font-bold">You’ve already had your one attempt ✅</h1>
+              <p className="text-white/70">
+                This season only allows one score per person.
+              </p>
+
+              {isAdmin && (
+                <button
+                  onClick={resetLeaderboardSeason}
+                  className="mt-3 px-4 py-3 rounded-xl bg-white text-black font-semibold hover:bg-white/90 transition"
+                >
+                  Admin: Reset leaderboard (new season)
+                </button>
+              )}
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <Leaderboard leaders={leaders} currentUid={user?.uid ?? ""} />
+              <div className="text-white/40 text-xs mt-3">
+                Season #{season}
+              </div>
+            </div>
+          </div>
+        </main>
+      </LoginGate>
+    );
+  }
+
+  // ===== Normal game UI =====
   return (
     <LoginGate>
       <main className="min-h-screen bg-black text-white flex items-center justify-center p-6">
@@ -195,41 +327,60 @@ export default function Home() {
               <div>
                 <h1 className="text-3xl font-bold">Whose Junk Is This?</h1>
                 <p className="text-white/70">
-                  Guess the object and the Now Buildings staff member it belongs to.
+                  Guess the object and the owner. One attempt per season.
                 </p>
+                <div className="text-white/40 text-xs mt-1">Season #{season}</div>
               </div>
 
               <div className="text-right">
                 <div className="text-white/70 text-sm">Score</div>
-                <div className="text-2xl font-bold">{score} / {ITEMS.length}</div>
+                <div className="text-2xl font-bold">
+                  {score} / {ITEMS.length}
+                </div>
               </div>
             </div>
           </header>
 
-          {/* GAME OVER SCREEN */}
+          {/* GAME OVER */}
           {gameOver ? (
             <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-4">
               <h2 className="text-2xl font-bold">Game Over 🎉</h2>
               <p className="text-white/70">
-                Final score: <span className="text-white font-semibold">{score}</span> / {ITEMS.length}
+                Final score: <span className="text-white font-semibold">{score}</span> /{" "}
+                {ITEMS.length}
               </p>
 
               <div className="flex flex-wrap gap-3">
                 <button
-                  onClick={saveScore}
+                  onClick={saveScoreOnce}
                   disabled={saving || !user}
                   className="px-4 py-3 rounded-xl bg-white text-black font-semibold hover:bg-white/90 transition disabled:opacity-60"
                 >
-                  {saving ? "Saving…" : "Save score to leaderboard"}
+                  {saving ? "Saving…" : "Submit my one attempt"}
                 </button>
 
                 <button
-                  onClick={restart}
+                  onClick={restartLocalOnly}
                   className="px-4 py-3 rounded-xl bg-white/10 hover:bg-white/15 transition"
                 >
-                  Play again
+                  Replay locally (won’t resubmit)
                 </button>
+
+                {isAdmin && (
+                  <button
+                    onClick={resetLeaderboardSeason}
+                    className="px-4 py-3 rounded-xl bg-white/10 hover:bg-white/15 transition"
+                  >
+                    Admin: Reset leaderboard
+                  </button>
+                )}
               </div>
+
+              {saveError && (
+                <div className="text-red-300 text-sm">
+                  {saveError}
+                </div>
+              )}
 
               <Leaderboard leaders={leaders} currentUid={user?.uid ?? ""} />
             </div>
@@ -238,7 +389,9 @@ export default function Home() {
               <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
                 <div className="flex items-center justify-between gap-4 mb-3">
                   <div className="text-white/70">
-                    Round <span className="text-white font-semibold">{index + 1}</span> / {ITEMS.length}
+                    Round{" "}
+                    <span className="text-white font-semibold">{index + 1}</span> /{" "}
+                    {ITEMS.length}
                   </div>
 
                   <button
@@ -249,7 +402,6 @@ export default function Home() {
                   </button>
                 </div>
 
-                {/* IMAGE AREA */}
                 <div className="rounded-2xl overflow-hidden border border-white/10 bg-black">
                   <div className="aspect-[16/9] w-full relative">
                     <img
@@ -285,7 +437,6 @@ export default function Home() {
                   </div>
                 </div>
 
-                {/* BUTTONS */}
                 <div className="mt-4 flex flex-wrap gap-3">
                   {!submitted ? (
                     <button
@@ -314,13 +465,12 @@ export default function Home() {
                         onClick={retry}
                         className="px-4 py-3 rounded-xl bg-white/10 hover:bg-white/15 transition"
                       >
-                        Try again
+                        Try again (this round)
                       </button>
                     </>
                   )}
                 </div>
 
-                {/* RESULTS */}
                 {submitted && (
                   <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4 space-y-2">
                     <div className="text-lg font-semibold">
@@ -348,15 +498,7 @@ export default function Home() {
                     </div>
 
                     {bothCorrect && (
-                      <div className="text-white/60 text-sm">
-                        +1 point ✅
-                      </div>
-                    )}
-
-                    {!showFull && (
-                      <div className="text-white/60 text-sm">
-                        Tip: click “Reveal full image” to see the full photo.
-                      </div>
+                      <div className="text-white/60 text-sm">+1 point ✅</div>
                     )}
                   </div>
                 )}
@@ -369,7 +511,7 @@ export default function Home() {
           )}
 
           <footer className="text-white/50 text-sm">
-            Images live in <span className="text-white/70">/public/junk/</span>. Each item uses a zoom + full image.
+            Images live in <span className="text-white/70">/public/junk/</span>.
           </footer>
         </div>
       </main>
@@ -382,7 +524,7 @@ function Leaderboard({ leaders, currentUid }: { leaders: LeaderRow[]; currentUid
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <h3 className="text-lg font-semibold">Leaderboard</h3>
-        <div className="text-white/50 text-sm">Top 20</div>
+        <div className="text-white/50 text-sm">Top 50 (this season)</div>
       </div>
 
       {leaders.length === 0 ? (
@@ -394,9 +536,7 @@ function Leaderboard({ leaders, currentUid }: { leaders: LeaderRow[]; currentUid
             return (
               <div
                 key={row.uid}
-                className={`flex items-center justify-between p-3 ${
-                  isMe ? "bg-white/10" : "bg-black/20"
-                }`}
+                className={`flex items-center justify-between p-3 ${isMe ? "bg-white/10" : "bg-black/20"}`}
               >
                 <div className="flex items-center gap-3">
                   <div className="w-8 text-white/60">{i + 1}.</div>
@@ -415,10 +555,6 @@ function Leaderboard({ leaders, currentUid }: { leaders: LeaderRow[]; currentUid
           })}
         </div>
       )}
-
-      <div className="text-white/40 text-xs">
-        Tip: Score saves your best result (it won’t overwrite a higher score).
-      </div>
     </div>
   );
 }
