@@ -50,7 +50,7 @@ const ITEMS: JunkItem[] = [
   {
     id: "bell-cam",
     zoomImage: "/junk/bellzoomed.jpg",
-    fullImage: "/junk/bell.jpeg",
+    fullImage: "/junk/bell.jpg",
     answerObject: "Bell",
     answerOwner: "Cam",
   },
