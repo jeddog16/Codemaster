@@ -106,6 +106,46 @@ type LeaderRow = {
 
 const ADMIN_EMAIL = "jed@nowbuildings.com.au";
 
+/**
+ * Animated aurora background (cheap + looks great on dark UI)
+ *
+ * NOTE: Add this CSS to app/globals.css (or your global stylesheet):
+ *
+ * .aurora{
+ *   background:
+ *     radial-gradient(60% 50% at 20% 30%, rgba(0,255,200,.18), transparent 60%),
+ *     radial-gradient(55% 45% at 80% 35%, rgba(70,120,255,.16), transparent 60%),
+ *     radial-gradient(60% 55% at 55% 85%, rgba(255,80,200,.10), transparent 60%);
+ *   filter: blur(30px) saturate(120%);
+ *   transform: translate3d(0,0,0);
+ *   animation: auroraMove 18s ease-in-out infinite alternate;
+ * }
+ *
+ * @keyframes auroraMove{
+ *   0%   { transform: translate(-2%, -2%) scale(1.02); }
+ *   50%  { transform: translate(2%, 1%)  scale(1.05); }
+ *   100% { transform: translate(-1%, 2%) scale(1.03); }
+ * }
+ *
+ * @media (prefers-reduced-motion: reduce){
+ *   .aurora{ animation: none; }
+ * }
+ */
+function AuroraBackground() {
+  return (
+    <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
+      {/* base */}
+      <div className="absolute inset-0 bg-black" />
+
+      {/* animated glow */}
+      <div className="absolute -inset-[20%] aurora" />
+
+      {/* vignette so content pops */}
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(0,0,0,0)_0%,rgba(0,0,0,0.35)_55%,rgba(0,0,0,0.85)_100%)]" />
+    </div>
+  );
+}
+
 export default function Home() {
   // ===== Auth user =====
   const [user, setUser] = useState<User | null>(null);
@@ -231,11 +271,7 @@ export default function Home() {
   useEffect(() => {
     if (season == null) return;
 
-    const q = query(
-      collection(db, "leaderboard"),
-      orderBy("score", "desc"),
-      limit(50)
-    );
+    const q = query(collection(db, "leaderboard"), orderBy("score", "desc"), limit(50));
 
     // We’ll filter season client-side for simplicity
     const unsub = onSnapshot(q, (snap) => {
@@ -306,7 +342,8 @@ export default function Home() {
   if (season == null) {
     return (
       <LoginGate>
-        <main className="min-h-screen bg-black text-white flex items-center justify-center p-6">
+        <main className="min-h-screen bg-black text-white flex items-center justify-center p-6 relative">
+          <AuroraBackground />
           <div className="text-white/70">
             Loading game settings… (Did you create Firestore doc meta/game with season=1?)
           </div>
@@ -318,7 +355,8 @@ export default function Home() {
   if (checkingAttempt) {
     return (
       <LoginGate>
-        <main className="min-h-screen bg-black text-white flex items-center justify-center p-6">
+        <main className="min-h-screen bg-black text-white flex items-center justify-center p-6 relative">
+          <AuroraBackground />
           <div className="text-white/70">Loading…</div>
         </main>
       </LoginGate>
@@ -329,13 +367,12 @@ export default function Home() {
   if (alreadySubmitted) {
     return (
       <LoginGate>
-        <main className="min-h-screen bg-black text-white flex items-center justify-center p-6">
+        <main className="min-h-screen bg-black text-white flex items-center justify-center p-6 relative">
+          <AuroraBackground />
           <div className="w-full max-w-3xl space-y-4">
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-2">
+            <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md p-6 space-y-2">
               <h1 className="text-2xl font-bold">You’ve already had your one attempt ✅</h1>
-              <p className="text-white/70">
-                This season only allows one score per person.
-              </p>
+              <p className="text-white/70">This season only allows one score per person.</p>
 
               {isAdmin && (
                 <button
@@ -347,11 +384,9 @@ export default function Home() {
               )}
             </div>
 
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+            <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md p-4">
               <Leaderboard leaders={leaders} currentUid={user?.uid ?? ""} />
-              <div className="text-white/40 text-xs mt-3">
-                Season #{season}
-              </div>
+              <div className="text-white/40 text-xs mt-3">Season #{season}</div>
             </div>
           </div>
         </main>
@@ -362,15 +397,15 @@ export default function Home() {
   // ===== Normal game UI =====
   return (
     <LoginGate>
-      <main className="min-h-screen bg-black text-white flex items-center justify-center p-6">
+      <main className="min-h-screen bg-black text-white flex items-center justify-center p-6 relative">
+        <AuroraBackground />
+
         <div className="w-full max-w-3xl space-y-6">
           <header className="space-y-2">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h1 className="text-3xl font-bold">Whose Junk Is This?</h1>
-                <p className="text-white/70">
-                  Guess the object and the owner. One attempt per season.
-                </p>
+                <p className="text-white/70">Guess the object and the owner. One attempt per season.</p>
                 <div className="text-white/40 text-xs mt-1">Season #{season}</div>
               </div>
 
@@ -385,11 +420,10 @@ export default function Home() {
 
           {/* GAME OVER */}
           {gameOver ? (
-            <div className="rounded-2xl border border-white/10 bg-white/5 p-6 space-y-4">
+            <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md p-6 space-y-4">
               <h2 className="text-2xl font-bold">Game Over 🎉</h2>
               <p className="text-white/70">
-                Final score: <span className="text-white font-semibold">{score}</span> /{" "}
-                {ITEMS.length}
+                Final score: <span className="text-white font-semibold">{score}</span> / {ITEMS.length}
               </p>
 
               <div className="flex flex-wrap gap-3">
@@ -418,22 +452,16 @@ export default function Home() {
                 )}
               </div>
 
-              {saveError && (
-                <div className="text-red-300 text-sm">
-                  {saveError}
-                </div>
-              )}
+              {saveError && <div className="text-red-300 text-sm">{saveError}</div>}
 
               <Leaderboard leaders={leaders} currentUid={user?.uid ?? ""} />
             </div>
           ) : (
             <>
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md p-4">
                 <div className="flex items-center justify-between gap-4 mb-3">
                   <div className="text-white/70">
-                    Round{" "}
-                    <span className="text-white font-semibold">{index + 1}</span> /{" "}
-                    {ITEMS.length}
+                    Round <span className="text-white font-semibold">{index + 1}</span> / {ITEMS.length}
                   </div>
 
                   <button
@@ -515,9 +543,7 @@ export default function Home() {
 
                 {submitted && (
                   <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4 space-y-2">
-                    <div className="text-lg font-semibold">
-                      {bothCorrect ? "✅ Nailed it!" : "❌ Not quite"}
-                    </div>
+                    <div className="text-lg font-semibold">{bothCorrect ? "✅ Nailed it!" : "❌ Not quite"}</div>
 
                     <div className="text-white/80">
                       <div>
@@ -539,14 +565,12 @@ export default function Home() {
                       </div>
                     </div>
 
-                    {bothCorrect && (
-                      <div className="text-white/60 text-sm">+1 point ✅</div>
-                    )}
+                    {bothCorrect && <div className="text-white/60 text-sm">+1 point ✅</div>}
                   </div>
                 )}
               </div>
 
-              <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+              <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md p-4">
                 <Leaderboard leaders={leaders} currentUid={user?.uid ?? ""} />
               </div>
             </>
@@ -578,7 +602,9 @@ function Leaderboard({ leaders, currentUid }: { leaders: LeaderRow[]; currentUid
             return (
               <div
                 key={row.uid}
-                className={`flex items-center justify-between p-3 ${isMe ? "bg-white/10" : "bg-black/20"}`}
+                className={`flex items-center justify-between p-3 ${
+                  isMe ? "bg-white/10" : "bg-black/20"
+                }`}
               >
                 <div className="flex items-center gap-3">
                   <div className="w-8 text-white/60">{i + 1}.</div>
