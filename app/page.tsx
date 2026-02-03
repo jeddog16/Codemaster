@@ -47,6 +47,48 @@ const ITEMS: JunkItem[] = [
     answerObject: "Mouse",
     answerOwner: "Jed",
   },
+  {
+    id: "bell-cam",
+    zoomImage: "/junk/bellzoomed.jpeg",
+    fullImage: "/junk/bell.jpeg",
+    answerObject: "Bell",
+    answerOwner: "Cam",
+  },
+  {
+    id: "camera-ben",
+    zoomImage: "/junk/camerazoomed.jpeg",
+    fullImage: "/junk/camera.jpeg",
+    answerObject: "Camera",
+    answerOwner: "Ben",
+  },
+  {
+    id: "duck-karina",
+    zoomImage: "/junk/duckzoomed.jpeg",
+    fullImage: "/junk/duck.jpeg",
+    answerObject: "Duck",
+    answerOwner: "Karina",
+  },
+  {
+    id: "calculator-brad",
+    zoomImage: "/junk/calculatorzoomed.jpeg",
+    fullImage: "/junk/calculator.jpeg",
+    answerObject: "Calculator",
+    answerOwner: "Brad",
+  },
+  {
+    id: "globe-ben",
+    zoomImage: "/junk/globezoomed.jpeg",
+    fullImage: "/junk/globe.jpeg",
+    answerObject: "Globe",
+    answerOwner: "Ben",
+  },
+  {
+    id: "jetski-nick",
+    zoomImage: "/junk/jetskizoomed.jpeg",
+    fullImage: "/junk/jetski.jpeg",
+    answerObject: "Jetski",
+    answerOwner: "Nick",
+  },
 ];
 
 function normalize(s: string) {
