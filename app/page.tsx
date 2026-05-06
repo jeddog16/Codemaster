@@ -1,628 +1,256 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import LoginGate from "@/components/LoginGate";
-import { auth, db } from "@/lib/firebase";
-import { onAuthStateChanged, User } from "firebase/auth";
-import {
-  collection,
-  doc,
-  getDoc,
-  onSnapshot,
-  orderBy,
-  limit,
-  query,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
-} from "firebase/firestore";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
-type JunkItem = {
+type Sale = {
   id: string;
-  zoomImage: string;
-  fullImage: string;
-  answerObject: string;
-  answerOwner: string;
+  time: string;
+  rep: string;
+  customer: string;
+  product: string;
+  amount: number;
+  stage: string;
+  createdDate: string;
 };
 
-const ITEMS: JunkItem[] = [
+type SalesApiError = {
+  error?: string;
+  message?: string;
+};
+
+const refreshIntervalMs = 30_000;
+
+const demoSales: Sale[] = [
   {
-    id: "eclipse-nick",
-    zoomImage: "/junk/eclipsezoomed.jpeg",
-    fullImage: "/junk/eclipse.jpeg",
-    answerObject: "Eclipse",
-    answerOwner: "Nick",
+    id: "demo-006-1",
+    time: "10:28",
+    rep: "Reilly Baker",
+    customer: "Riverland Ag Storage Upgrade",
+    product: "18.0m x 36.0m x 5.7m",
+    amount: 101081,
+    stage: "Closed Won",
+    createdDate: new Date().toISOString(),
   },
   {
-    id: "therock-lenka",
-    zoomImage: "/junk/therockzoomed.jpeg",
-    fullImage: "/junk/therock.jpeg",
-    answerObject: "The Rock",
-    answerOwner: "Lenka",
+    id: "demo-006-2",
+    time: "09:46",
+    rep: "Karina Wills",
+    customer: "North Coast Machinery Shed",
+    product: "15.0m x 30.0m x 5.0m",
+    amount: 84250,
+    stage: "Closed Won",
+    createdDate: new Date(Date.now() - 42 * 60 * 1000).toISOString(),
   },
   {
-    id: "mouse-jed",
-    zoomImage: "/junk/mousezoomed.jpeg",
-    fullImage: "/junk/mouse.jpeg",
-    answerObject: "Mouse",
-    answerOwner: "Jed",
-  },
-  {
-    id: "bell-cam",
-    zoomImage: "/junk/bellzoomed.jpg",
-    fullImage: "/junk/bell.jpg",
-    answerObject: "Bell",
-    answerOwner: "Cam",
-  },
-  {
-    id: "camera-ben",
-    zoomImage: "/junk/camerazoomed.jpg",
-    fullImage: "/junk/camera.jpg",
-    answerObject: "Camera",
-    answerOwner: "Ben",
-  },
-  {
-    id: "duck-karina",
-    zoomImage: "/junk/duckzoomed.jpg",
-    fullImage: "/junk/duck.jpg",
-    answerObject: "Duck",
-    answerOwner: "Karina",
-  },
-  {
-    id: "calculator-brad",
-    zoomImage: "/junk/calculatorzoomed.jpg",
-    fullImage: "/junk/calculator.jpg",
-    answerObject: "Calculator",
-    answerOwner: "Brad",
-  },
-  {
-    id: "globe-ben",
-    zoomImage: "/junk/globezoomed.jpg",
-    fullImage: "/junk/globe.jpg",
-    answerObject: "Globe",
-    answerOwner: "Ben",
-  },
-  {
-    id: "jetski-nick",
-    zoomImage: "/junk/jetskizoomed.jpg",
-    fullImage: "/junk/jetski.jpg",
-    answerObject: "Jetski",
-    answerOwner: "Nick",
+    id: "demo-006-3",
+    time: "08:57",
+    rep: "Jed Arnold",
+    customer: "Western Downs Workshop",
+    product: "12.0m x 24.0m x 4.8m",
+    amount: 63790,
+    stage: "Closed Won",
+    createdDate: new Date(Date.now() - 91 * 60 * 1000).toISOString(),
   },
 ];
 
-function normalize(s: string) {
-  return s.trim().toLowerCase();
+const quotes = [
+  "Build trust first. The building follows.",
+  "Every quote is a chance to make the hard yards easier.",
+  "Strong sheds. Strong standards. Strong follow-up.",
+  "Win the day one useful conversation at a time.",
+];
+
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat("en-AU", {
+    style: "currency",
+    currency: "AUD",
+    maximumFractionDigits: 0,
+  }).format(value);
 }
 
-type LeaderRow = {
-  uid: string;
-  name: string;
-  email: string;
-  score: number;
-  season: number;
-  submittedAt?: any;
-};
+function formatLastUpdated(date: Date | null) {
+  if (!date) {
+    return "Not updated yet";
+  }
 
-const ADMIN_EMAIL = "jed@nowbuildings.com.au";
+  return new Intl.DateTimeFormat("en-AU", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(date);
+}
 
-/**
- * Animated aurora background (cheap + looks great on dark UI)
- *
- * NOTE: Add this CSS to app/globals.css (or your global stylesheet):
- *
- * .aurora{
- *   background:
- *     radial-gradient(60% 50% at 20% 30%, rgba(0,255,200,.18), transparent 60%),
- *     radial-gradient(55% 45% at 80% 35%, rgba(70,120,255,.16), transparent 60%),
- *     radial-gradient(60% 55% at 55% 85%, rgba(255,80,200,.10), transparent 60%);
- *   filter: blur(30px) saturate(120%);
- *   transform: translate3d(0,0,0);
- *   animation: auroraMove 18s ease-in-out infinite alternate;
- * }
- *
- * @keyframes auroraMove{
- *   0%   { transform: translate(-2%, -2%) scale(1.02); }
- *   50%  { transform: translate(2%, 1%)  scale(1.05); }
- *   100% { transform: translate(-1%, 2%) scale(1.03); }
- * }
- *
- * @media (prefers-reduced-motion: reduce){
- *   .aurora{ animation: none; }
- * }
- */
-function AuroraBackground() {
-  return (
-    <div aria-hidden className="pointer-events-none fixed inset-0 -z-10 overflow-hidden">
-      {/* base */}
-      <div className="absolute inset-0 bg-black" />
-
-      {/* animated glow */}
-      <div className="absolute -inset-[20%] aurora" />
-
-      {/* vignette so content pops */}
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(0,0,0,0)_0%,rgba(0,0,0,0.35)_55%,rgba(0,0,0,0.85)_100%)]" />
-    </div>
-  );
+function isSalesArray(payload: unknown): payload is Sale[] {
+  return Array.isArray(payload);
 }
 
 export default function Home() {
-  // ===== Auth user =====
-  const [user, setUser] = useState<User | null>(null);
-  useEffect(() => onAuthStateChanged(auth, (u) => setUser(u)), []);
+  const [sales, setSales] = useState<Sale[]>(demoSales);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [usingDemoData, setUsingDemoData] = useState(true);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
-  const isAdmin = (user?.email || "").toLowerCase() === ADMIN_EMAIL.toLowerCase();
-
-  // ===== Season state =====
-  const [season, setSeason] = useState<number | null>(null);
-
-  useEffect(() => {
-    // Live read season
-    return onSnapshot(doc(db, "meta", "game"), (snap) => {
-      const s = snap.data()?.season;
-      setSeason(typeof s === "number" ? s : null);
-    });
+  const quoteOfTheDay = useMemo(() => {
+    const dayKey = new Date().toISOString().slice(0, 10);
+    const quoteIndex = [...dayKey].reduce((total, char) => total + char.charCodeAt(0), 0) % quotes.length;
+    return quotes[quoteIndex];
   }, []);
 
-  // ===== Game state =====
-  const [index, setIndex] = useState(0);
-  const current = useMemo(() => ITEMS[index], [index]);
-
-  const [guessObject, setGuessObject] = useState("");
-  const [guessOwner, setGuessOwner] = useState("");
-  const [submitted, setSubmitted] = useState(false);
-  const [showFull, setShowFull] = useState(false);
-
-  const [score, setScore] = useState(0);
-  const [scoredThisRound, setScoredThisRound] = useState(false);
-
-  const [gameOver, setGameOver] = useState(false);
-
-  // One-attempt enforcement UI state
-  const [alreadySubmitted, setAlreadySubmitted] = useState(false);
-  const [checkingAttempt, setCheckingAttempt] = useState(true);
-
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-
-  const correctObject = normalize(guessObject) === normalize(current.answerObject);
-  const correctOwner = normalize(guessOwner) === normalize(current.answerOwner);
-  const bothCorrect = correctObject && correctOwner;
-
-  // Check if this user already submitted for this season
-  useEffect(() => {
-    const run = async () => {
-      if (!user || season == null) {
-        setAlreadySubmitted(false);
-        setCheckingAttempt(false);
-        return;
-      }
-
-      setCheckingAttempt(true);
-      const ref = doc(db, "leaderboard", user.uid);
-      const snap = await getDoc(ref);
-      if (!snap.exists()) {
-        setAlreadySubmitted(false);
-        setCheckingAttempt(false);
-        return;
-      }
-
-      const data = snap.data() as any;
-      setAlreadySubmitted(data?.season === season);
-      setCheckingAttempt(false);
-    };
-
-    run();
-  }, [user?.uid, season]);
-
-  function submit() {
-    setSubmitted(true);
-
-    if (bothCorrect && !scoredThisRound) {
-      setScore((s) => s + 1);
-      setScoredThisRound(true);
-    }
-  }
-
-  function reveal() {
-    setShowFull(true);
-  }
-
-  function next() {
-    const isLast = index === ITEMS.length - 1;
-
-    if (isLast) {
-      setGameOver(true);
-      return;
-    }
-
-    setIndex((i) => i + 1);
-    setGuessObject("");
-    setGuessOwner("");
-    setSubmitted(false);
-    setShowFull(false);
-    setScoredThisRound(false);
-  }
-
-  function retry() {
-    setGuessObject("");
-    setGuessOwner("");
-    setSubmitted(false);
-    setShowFull(false);
-    setScoredThisRound(false);
-  }
-
-  function restartLocalOnly() {
-    // This does NOT let them re-submit to leaderboard (rules block it)
-    setIndex(0);
-    setGuessObject("");
-    setGuessOwner("");
-    setSubmitted(false);
-    setShowFull(false);
-    setScoredThisRound(false);
-    setScore(0);
-    setGameOver(false);
-    setSaveError(null);
-  }
-
-  // ===== Leaderboard =====
-  const [leaders, setLeaders] = useState<LeaderRow[]>([]);
-
-  useEffect(() => {
-    if (season == null) return;
-
-    const q = query(collection(db, "leaderboard"), orderBy("score", "desc"), limit(50));
-
-    // We’ll filter season client-side for simplicity
-    const unsub = onSnapshot(q, (snap) => {
-      const rows: LeaderRow[] = snap.docs
-        .map((d) => {
-          const data = d.data() as any;
-          return {
-            uid: d.id,
-            name: data.name ?? "",
-            email: data.email ?? "",
-            score: Number(data.score ?? 0),
-            season: Number(data.season ?? -1),
-            submittedAt: data.submittedAt,
-          };
-        })
-        .filter((r) => r.season === season);
-
-      setLeaders(rows);
-    });
-
-    return () => unsub();
-  }, [season]);
-
-  async function saveScoreOnce() {
-    if (!user) return;
-    if (season == null) {
-      setSaveError("Season not loaded. Check meta/game exists in Firestore.");
-      return;
-    }
-
-    setSaving(true);
-    setSaveError(null);
-
+  const fetchSales = useCallback(async () => {
     try {
-      // IMPORTANT: setDoc without merge so it is a CREATE.
-      // Firestore rules allow create only once per season.
-      await setDoc(doc(db, "leaderboard", user.uid), {
-        uid: user.uid,
-        email: user.email ?? "",
-        name: user.displayName ?? (user.email ?? "").split("@")[0],
-        score,
-        season,
-        submittedAt: serverTimestamp(),
-      });
+      setError(null);
+      const response = await fetch("/api/sales", { cache: "no-store" });
+      const payload: unknown = await response.json();
 
-      setAlreadySubmitted(true);
-    } catch (e: any) {
-      // Most common: permission denied because they already submitted
-      setSaveError(e?.message || "Could not save score.");
+      if (!response.ok) {
+        const apiError = payload as SalesApiError;
+        throw new Error(apiError.message || "Salesforce returned an error.");
+      }
+
+      if (!isSalesArray(payload)) {
+        throw new Error("Salesforce response was not in the expected sales-feed format.");
+      }
+
+      setSales(payload);
+      setUsingDemoData(false);
+      setLastUpdated(new Date());
+    } catch (fetchError) {
+      setSales(demoSales);
+      setUsingDemoData(true);
+      setError(fetchError instanceof Error ? fetchError.message : "Unable to load Salesforce sales.");
+      setLastUpdated(new Date());
     } finally {
-      setSaving(false);
+      setLoading(false);
     }
-  }
+  }, []);
 
-  async function resetLeaderboardSeason() {
-    if (!isAdmin) return;
-    if (season == null) return;
+  useEffect(() => {
+    fetchSales();
+    const interval = window.setInterval(fetchSales, refreshIntervalMs);
+    return () => window.clearInterval(interval);
+  }, [fetchSales]);
 
-    await updateDoc(doc(db, "meta", "game"), {
-      season: season + 1,
-    });
-
-    // After reset, allow fresh plays
-    restartLocalOnly();
-  }
-
-  // ===== Loading gates =====
-  if (season == null) {
-    return (
-      <LoginGate>
-        <main className="min-h-screen bg-black text-white flex items-center justify-center p-6 relative">
-          <AuroraBackground />
-          <div className="text-white/70">
-            Loading game settings… (Did you create Firestore doc meta/game with season=1?)
-          </div>
-        </main>
-      </LoginGate>
-    );
-  }
-
-  if (checkingAttempt) {
-    return (
-      <LoginGate>
-        <main className="min-h-screen bg-black text-white flex items-center justify-center p-6 relative">
-          <AuroraBackground />
-          <div className="text-white/70">Loading…</div>
-        </main>
-      </LoginGate>
-    );
-  }
-
-  // If they already submitted for this season, block the game and show leaderboard
-  if (alreadySubmitted) {
-    return (
-      <LoginGate>
-        <main className="min-h-screen bg-black text-white flex items-center justify-center p-6 relative">
-          <AuroraBackground />
-          <div className="w-full max-w-3xl space-y-4">
-            <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md p-6 space-y-2">
-              <h1 className="text-2xl font-bold">You’ve already had your one attempt ✅</h1>
-              <p className="text-white/70">This season only allows one score per person.</p>
-
-              {isAdmin && (
-                <button
-                  onClick={resetLeaderboardSeason}
-                  className="mt-3 px-4 py-3 rounded-xl bg-white text-black font-semibold hover:bg-white/90 transition"
-                >
-                  Admin: Reset leaderboard (new season)
-                </button>
-              )}
-            </div>
-
-            <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md p-4">
-              <Leaderboard leaders={leaders} currentUid={user?.uid ?? ""} />
-              <div className="text-white/40 text-xs mt-3">Season #{season}</div>
-            </div>
-          </div>
-        </main>
-      </LoginGate>
-    );
-  }
-
-  // ===== Normal game UI =====
-  return (
-    <LoginGate>
-      <main className="min-h-screen bg-black text-white flex items-center justify-center p-6 relative">
-        <AuroraBackground />
-
-        <div className="w-full max-w-3xl space-y-6">
-          <header className="space-y-2">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h1 className="text-3xl font-bold">Whose Junk Is This?</h1>
-                <p className="text-white/70">Guess the object and the owner. One attempt per season.</p>
-                <div className="text-white/40 text-xs mt-1">Season #{season}</div>
-              </div>
-
-              <div className="text-right">
-                <div className="text-white/70 text-sm">Score</div>
-                <div className="text-2xl font-bold">
-                  {score} / {ITEMS.length}
-                </div>
-              </div>
-            </div>
-          </header>
-
-          {/* GAME OVER */}
-          {gameOver ? (
-            <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md p-6 space-y-4">
-              <h2 className="text-2xl font-bold">Game Over 🎉</h2>
-              <p className="text-white/70">
-                Final score: <span className="text-white font-semibold">{score}</span> / {ITEMS.length}
-              </p>
-
-              <div className="flex flex-wrap gap-3">
-                <button
-                  onClick={saveScoreOnce}
-                  disabled={saving || !user}
-                  className="px-4 py-3 rounded-xl bg-white text-black font-semibold hover:bg-white/90 transition disabled:opacity-60"
-                >
-                  {saving ? "Saving…" : "Submit my one attempt"}
-                </button>
-
-                <button
-                  onClick={restartLocalOnly}
-                  className="px-4 py-3 rounded-xl bg-white/10 hover:bg-white/15 transition"
-                >
-                  Replay locally (won’t resubmit)
-                </button>
-
-                {isAdmin && (
-                  <button
-                    onClick={resetLeaderboardSeason}
-                    className="px-4 py-3 rounded-xl bg-white/10 hover:bg-white/15 transition"
-                  >
-                    Admin: Reset leaderboard
-                  </button>
-                )}
-              </div>
-
-              {saveError && <div className="text-red-300 text-sm">{saveError}</div>}
-
-              <Leaderboard leaders={leaders} currentUid={user?.uid ?? ""} />
-            </div>
-          ) : (
-            <>
-              <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md p-4">
-                <div className="flex items-center justify-between gap-4 mb-3">
-                  <div className="text-white/70">
-                    Round <span className="text-white font-semibold">{index + 1}</span> / {ITEMS.length}
-                  </div>
-
-                  <button
-                    onClick={next}
-                    className="px-3 py-2 rounded-xl bg-white/10 hover:bg-white/15 transition"
-                  >
-                    {index === ITEMS.length - 1 ? "Finish →" : "Skip →"}
-                  </button>
-                </div>
-
-                <div className="rounded-2xl overflow-hidden border border-white/10 bg-black">
-                  <div className="aspect-[16/9] w-full relative">
-                    <img
-                      src={showFull ? current.fullImage : current.zoomImage}
-                      alt="Junk"
-                      className="w-full h-full object-cover"
-                      draggable={false}
-                    />
-                  </div>
-                </div>
-
-                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div className="space-y-2">
-                    <label className="text-sm text-white/70">What is it?</label>
-                    <input
-                      value={guessObject}
-                      onChange={(e) => setGuessObject(e.target.value)}
-                      placeholder="e.g. keys"
-                      className="w-full px-4 py-3 rounded-xl bg-black/40 border border-white/10 outline-none focus:border-white/30"
-                      disabled={submitted}
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm text-white/70">Whose is it?</label>
-                    <input
-                      value={guessOwner}
-                      onChange={(e) => setGuessOwner(e.target.value)}
-                      placeholder="e.g. Jed"
-                      className="w-full px-4 py-3 rounded-xl bg-black/40 border border-white/10 outline-none focus:border-white/30"
-                      disabled={submitted}
-                    />
-                  </div>
-                </div>
-
-                <div className="mt-4 flex flex-wrap gap-3">
-                  {!submitted ? (
-                    <button
-                      onClick={submit}
-                      className="px-4 py-3 rounded-xl bg-white text-black font-semibold hover:bg-white/90 transition"
-                    >
-                      Submit guess
-                    </button>
-                  ) : (
-                    <>
-                      <button
-                        onClick={reveal}
-                        className="px-4 py-3 rounded-xl bg-white/10 hover:bg-white/15 transition"
-                      >
-                        Reveal full image
-                      </button>
-
-                      <button
-                        onClick={next}
-                        className="px-4 py-3 rounded-xl bg-white text-black font-semibold hover:bg-white/90 transition"
-                      >
-                        {index === ITEMS.length - 1 ? "Finish →" : "Next →"}
-                      </button>
-
-                      <button
-                        onClick={retry}
-                        className="px-4 py-3 rounded-xl bg-white/10 hover:bg-white/15 transition"
-                      >
-                        Try again (this round)
-                      </button>
-                    </>
-                  )}
-                </div>
-
-                {submitted && (
-                  <div className="mt-4 rounded-xl border border-white/10 bg-white/5 p-4 space-y-2">
-                    <div className="text-lg font-semibold">{bothCorrect ? "✅ Nailed it!" : "❌ Not quite"}</div>
-
-                    <div className="text-white/80">
-                      <div>
-                        Object:{" "}
-                        <span className={correctObject ? "text-white" : "text-white/50"}>
-                          {guessObject || "(blank)"}
-                        </span>{" "}
-                        {correctObject ? "✅" : "❌"}{" "}
-                        <span className="text-white/50">(Answer: {current.answerObject})</span>
-                      </div>
-
-                      <div>
-                        Owner:{" "}
-                        <span className={correctOwner ? "text-white" : "text-white/50"}>
-                          {guessOwner || "(blank)"}
-                        </span>{" "}
-                        {correctOwner ? "✅" : "❌"}{" "}
-                        <span className="text-white/50">(Answer: {current.answerOwner})</span>
-                      </div>
-                    </div>
-
-                    {bothCorrect && <div className="text-white/60 text-sm">+1 point ✅</div>}
-                  </div>
-                )}
-              </div>
-
-              <div className="rounded-2xl border border-white/10 bg-white/5 backdrop-blur-md p-4">
-                <Leaderboard leaders={leaders} currentUid={user?.uid ?? ""} />
-              </div>
-            </>
-          )}
-
-          <footer className="text-white/50 text-sm">
-            Images live in <span className="text-white/70">/public/junk/</span>.
-          </footer>
-        </div>
-      </main>
-    </LoginGate>
+  const todayTotal = useMemo(() => sales.reduce((total, sale) => total + sale.amount, 0), [sales]);
+  const bestSale = useMemo(
+    () => sales.reduce<Sale | null>((best, sale) => (!best || sale.amount > best.amount ? sale : best), null),
+    [sales],
   );
-}
 
-function Leaderboard({ leaders, currentUid }: { leaders: LeaderRow[]; currentUid: string }) {
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold">Leaderboard</h3>
-        <div className="text-white/50 text-sm">Top 50 (this season)</div>
-      </div>
-
-      {leaders.length === 0 ? (
-        <div className="text-white/60 text-sm">No scores yet. Be the first!</div>
-      ) : (
-        <div className="divide-y divide-white/10 rounded-xl border border-white/10 overflow-hidden">
-          {leaders.map((row, i) => {
-            const isMe = row.uid === currentUid;
-            return (
-              <div
-                key={row.uid}
-                className={`flex items-center justify-between p-3 ${
-                  isMe ? "bg-white/10" : "bg-black/20"
-                }`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-8 text-white/60">{i + 1}.</div>
-                  <div>
-                    <div className="font-semibold">
-                      {row.name || row.email || "Unknown"}
-                      {isMe ? <span className="text-white/60"> (you)</span> : null}
-                    </div>
-                    <div className="text-white/50 text-xs">{row.email}</div>
-                  </div>
-                </div>
-
-                <div className="text-xl font-bold">{row.score}</div>
+    <main className="min-h-screen bg-[#f4f4f1] text-black">
+      <section className="mx-auto flex min-h-screen w-full max-w-3xl flex-col gap-4 px-3 py-4 sm:px-5 lg:px-6">
+        <header className="overflow-hidden rounded-3xl bg-black text-white shadow-2xl shadow-black/20">
+          <div className="h-2 bg-[#FF8200]" />
+          <div className="space-y-5 p-5 sm:p-7">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.32em] text-[#FF8200]">NOW BUILDINGS</p>
+                <h1 className="mt-2 text-4xl font-black uppercase leading-none tracking-[-0.05em] sm:text-5xl">
+                  Live Sales Wall
+                </h1>
+                <p className="mt-2 text-sm font-semibold uppercase tracking-[0.18em] text-white/70">
+                  Salesforce side dashboard
+                </p>
               </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
+              <div className="rounded-2xl border border-white/15 bg-white/10 px-3 py-2 text-right">
+                <p className="text-[10px] font-black uppercase tracking-[0.2em] text-white/50">Refresh</p>
+                <p className="text-sm font-black text-[#FF8200]">30 sec</p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2 text-xs font-bold uppercase tracking-[0.16em] text-white/70">
+              <span className="h-2 w-2 rounded-full bg-[#FF8200] shadow-[0_0_18px_#FF8200]" />
+              <span>Last updated {formatLastUpdated(lastUpdated)}</span>
+              {loading ? <span className="rounded-full bg-white/10 px-2 py-1 text-white">Loading live feed</span> : null}
+              {usingDemoData ? <span className="rounded-full bg-[#FF8200] px-2 py-1 text-black">Demo fallback</span> : null}
+            </div>
+          </div>
+        </header>
+
+        {error ? (
+          <div className="rounded-2xl border-2 border-[#FF8200] bg-white p-4 shadow-sm">
+            <p className="text-xs font-black uppercase tracking-[0.22em] text-[#FF8200]">Salesforce connection notice</p>
+            <p className="mt-2 text-sm font-semibold text-black/75">{error}</p>
+            <p className="mt-1 text-xs text-black/50">Showing demo sales so the dashboard remains usable in local development.</p>
+          </div>
+        ) : null}
+
+        <section className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <article className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-black/5">
+            <p className="text-xs font-black uppercase tracking-[0.22em] text-black/45">Today&apos;s total sales value</p>
+            <p className="mt-3 text-4xl font-black tracking-[-0.05em] text-black">{formatCurrency(todayTotal)}</p>
+            <div className="mt-4 h-2 rounded-full bg-black">
+              <div className="h-2 w-3/4 rounded-full bg-[#FF8200]" />
+            </div>
+          </article>
+
+          <article className="rounded-3xl bg-black p-5 text-white shadow-sm">
+            <p className="text-xs font-black uppercase tracking-[0.22em] text-white/45">Number of sales today</p>
+            <p className="mt-3 text-5xl font-black tracking-[-0.06em] text-[#FF8200]">{sales.length}</p>
+            <p className="mt-3 text-sm font-semibold text-white/65">Closed-won opportunities from today&apos;s Salesforce feed.</p>
+          </article>
+        </section>
+
+        <section className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <article className="rounded-3xl bg-black p-5 text-white shadow-sm">
+            <p className="text-xs font-black uppercase tracking-[0.22em] text-[#FF8200]">Best sale of the day</p>
+            {bestSale ? (
+              <div className="mt-4 space-y-2">
+                <p className="text-3xl font-black tracking-[-0.04em]">{formatCurrency(bestSale.amount)}</p>
+                <p className="text-base font-black uppercase leading-tight">{bestSale.customer}</p>
+                <p className="text-sm font-semibold text-white/60">{bestSale.rep}</p>
+              </div>
+            ) : (
+              <p className="mt-4 text-sm text-white/60">No closed-won sales yet today.</p>
+            )}
+          </article>
+
+          <article className="rounded-3xl border-l-8 border-[#FF8200] bg-white p-5 shadow-sm ring-1 ring-black/5">
+            <p className="text-xs font-black uppercase tracking-[0.22em] text-black/45">Quote of the day</p>
+            <blockquote className="mt-4 text-2xl font-black uppercase leading-tight tracking-[-0.04em] text-black">
+              “{quoteOfTheDay}”
+            </blockquote>
+          </article>
+        </section>
+
+        <section className="flex-1 rounded-3xl bg-white p-3 shadow-sm ring-1 ring-black/5 sm:p-4">
+          <div className="mb-3 flex items-center justify-between gap-3 px-1">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.22em] text-[#FF8200]">Live recent sales feed</p>
+              <h2 className="text-2xl font-black uppercase tracking-[-0.04em]">Newest first</h2>
+            </div>
+            <span className="rounded-full bg-black px-3 py-1 text-xs font-black uppercase tracking-[0.14em] text-white">
+              {loading ? "Syncing" : "Live"}
+            </span>
+          </div>
+
+          <div className="space-y-3">
+            {sales.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-black/20 bg-[#f4f4f1] p-5 text-sm font-semibold text-black/55">
+                No closed-won Salesforce opportunities have been created today yet.
+              </div>
+            ) : null}
+
+            {sales.map((sale) => (
+              <article key={sale.id} className="rounded-2xl border border-black/10 bg-[#f4f4f1] p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="rounded-full bg-[#FF8200] px-2 py-1 text-xs font-black text-black">{sale.time}</span>
+                      <span className="text-xs font-black uppercase tracking-[0.18em] text-black/45">{sale.stage}</span>
+                    </div>
+                    <h3 className="mt-3 text-lg font-black uppercase leading-tight tracking-[-0.03em]">{sale.customer}</h3>
+                    {sale.product ? <p className="mt-1 text-sm font-bold text-black/60">{sale.product}</p> : null}
+                    <p className="mt-2 text-xs font-black uppercase tracking-[0.16em] text-black/45">Rep: {sale.rep}</p>
+                  </div>
+                  <p className="shrink-0 text-right text-xl font-black tracking-[-0.04em]">{formatCurrency(sale.amount)}</p>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+      </section>
+    </main>
   );
 }
