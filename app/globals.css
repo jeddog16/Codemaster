@@ -1,47 +1,27 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #f4f4f1;
+  --foreground: #000000;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: Arial, Helvetica, sans-serif;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--background);
 }
 
 body {
+  min-height: 100vh;
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
-}
-
-/* ===== Animated aurora background ===== */
-.aurora {
-  background:
-    radial-gradient(60% 50% at 20% 30%, rgba(0,255,200,.18), transparent 60%),
-    radial-gradient(55% 45% at 80% 35%, rgba(70,120,255,.16), transparent 60%),
-    radial-gradient(60% 55% at 55% 85%, rgba(255,80,200,.10), transparent 60%);
-  filter: blur(30px) saturate(120%);
-  transform: translate3d(0,0,0);
-  animation: auroraMove 18s ease-in-out infinite alternate;
-}
-
-@keyframes auroraMove {
-  0%   { transform: translate(-2%, -2%) scale(1.02); }
-  50%  { transform: translate( 2%,  1%) scale(1.05); }
-  100% { transform: translate(-1%,  2%) scale(1.03); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .aurora { animation: none; }
 }
